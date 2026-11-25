@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#1c1b22"><link rel="manifest" href="manifest.webmanifest"><link rel="icon" href="icon.svg">
+<title>PDF Flipbook</title>
+<style>
+:root{--bg:#1c1b22;--fg:#f4efe6;--ac:#e8a84c;--mu:#9b97a8}
+*{box-sizing:border-box}html,body{height:100%;margin:0}
+body{background:var(--bg);color:var(--fg);font:15px system-ui,sans-serif;display:flex;flex-direction:column;padding:env(safe-area-inset-top) 0 env(safe-area-inset-bottom);overflow:hidden}
+header{display:flex;gap:8px;align-items:center;padding:10px 12px}
+h1{font-size:16px;margin:0;flex:1}
+button,.btn{background:#2c2a36;color:var(--fg);border:0;border-radius:8px;padding:9px 14px;font:inherit;cursor:pointer}
+.btn.p{background:var(--ac);color:#1c1b22;font-weight:600}
+button:disabled{opacity:.35}
+#stage{flex:1;display:flex;align-items:center;justify-content:center;perspective:2400px;min-height:0;position:relative}
+#drop{text-align:center;color:var(--mu);padding:24px;border:2px dashed #3d3a4b;border-radius:16px;margin:16px;max-width:420px}
+#drop.on{border-color:var(--ac)}#drop p{margin:6px 0 14px}
+#wrap{transition:transform .8s;transform-style:preserve-3d;position:relative}
+.leaf{position:absolute;top:0;right:0;width:50%;height:100%;transform-origin:left center;transform-style:preserve-3d;transition:transform .8s,z-index 0s .4s}
+.leaf.f{transform:rotateY(-180deg)}
+.face{position:absolute;inset:0;backface-visibility:hidden;background:#fff;overflow:hidden}
+.face img{width:100%;height:100%;display:block}
+.back{transform:rotateY(180deg)}
+.face:after{content:"";position:absolute;inset:0;pointer-events:none;background:linear-gradient(90deg,rgba(0,0,0,.28),transparent 12%)}
+.back:after{background:linear-gradient(270deg,rgba(0,0,0,.28),transparent 12%)}
+.single .leaf{width:100%}.single .back{display:none}
+footer{display:flex;gap:10px;align-items:center;justify-content:center;padding:10px;color:var(--mu)}
+#bar{position:absolute;left:0;right:0;top:0;height:3px;background:var(--ac);width:0;transition:width .2s}
+#st{position:absolute;bottom:6px;color:var(--mu);font-size:13px}
+[hidden]{display:none!important}
+</style></head><body>
+<header><h1>📖 PDF Flipbook</h1><button id="re" hidden>Reopen last</button><label class="btn p">Open PDF<input id="fi" type="file" accept="application/pdf" hidden></label></header>
+<div id="stage"><div id="bar"></div>
+<div id="drop"><div style="font-size:44px">📄➜📖</div><p>Drop a PDF here or tap Open PDF.<br>Everything runs on your device, offline.</p></div>
+<div id="wrap" hidden></div><div id="st"></div></div>
+<footer><button id="pv" disabled>‹</button><span id="pg">–</span><button id="nx" disabled>›</button></footer>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js"></script>
+<script>
+const $=s=>document.querySelector(s);
+let pages=[],cur=0,leaves=[],single=false,ratio=.707;
+// IndexedDB (last opened PDF)
+const db=()=>new Promise((res,rej)=>{const r=indexedDB.open('flipbook',1);r.onupgradeneeded=()=>r.result.createObjectStore('k');r.onsuccess=()=>res(r.result);r.onerror=rej});
+async function dbSet(v){try{const d=await db();d.transaction('k','readwrite').objectStore('k').put(v,'last')}catch(e){}}
+async function dbGet(){try{const d=await db();return await new Promise(r=>{const q=d.transaction('k').objectStore('k').get('last');q.onsuccess=()=>r(q.result);q.onerror=()=>r()})}catch(e){}}
+dbGet().then(v=>{if(v)$('#re').hidden=false});
+$('#re').onclick=async()=>{const v=await dbGet();if(v)load(v.buf,false)};
+$('#fi').onchange=e=>{const f=e.target.files[0];if(f)readFile(f)};
+const dz=$('#drop');
+['dragover','dragenter'].forEach(t=>document.addEventListener(t,e=>{e.preventDefault();dz.classList.add('on')}));
+['dragleave','drop'].forEach(t=>document.addEventListener(t,e=>{e.preventDefault();dz.classList.remove('on')}));
+document.addEventListener('drop',e=>{const f=e.dataTransfer.files[0];if(f)readFile(f)});
+async function readFile(f){const buf=await f.arrayBuffer();dbSet({buf:buf.slice(0),name:f.name});load(buf,true)}
+async function load(buf,fresh){
+  $('#st').textContent='Rendering pages…';dz.hidden=true;$('#wrap').hidden=true;pages=[];
+  try{
+    const pdf=await pdfjsLib.getDocument({data:new Uint8Array(buf)}).promise;
+    for(let i=1;i<=pdf.numPages;i++){
+      const p=await pdf.getPage(i),v0=p.getViewport({scale:1}),s=Math.min(2,1300/v0.height),v=p.getViewport({scale:s});
+      const c=document.createElement('canvas');c.width=v.width;c.height=v.height;
+      await p.render({canvasContext:c.getContext('2d'),viewport:v}).promise;
+      pages.push(c.toDataURL('image/jpeg',.85));if(i==1)ratio=v0.width/v0.height;
+      $('#bar').style.width=(i/pdf.numPages*100)+'%';$('#st').textContent=`Rendering ${i}/${pdf.numPages}`;
+      if(i==1){cur=0;build()}
+    }
+    $('#st').textContent='';setTimeout(()=>$('#bar').style.width=0,400);build();
+  }catch(e){$('#st').textContent='Could not read that PDF.';dz.hidden=false}
+}
+function build(){
+  const st=$('#stage'),aw=st.clientWidth-16,ah=st.clientHeight-24;
+  single=aw<720;
+  let H=Math.min(ah,(single?aw:aw/2)/ratio),W=H*ratio;
+  const w=$('#wrap');w.hidden=false;w.className=single?'single':'';
+  w.style.height=H+'px';w.style.width=(single?W:2*W)+'px';
+  w.innerHTML='';leaves=[];
+  const step=single?1:2,n=pages.length,L=Math.ceil(n/step);
+  for(let k=0;k<L;k++){
+    const d=document.createElement('div');d.className='leaf';
+    const a=pages[k*step],b=single?null:pages[k*step+1];
+    d.innerHTML=`<div class="face"><img src="${a}"></div>`+(single?'':`<div class="face back">${b?`<img src="${b}">`:''}</div>`);
+    w.appendChild(d);leaves.push(d);
+  }
+  if(single)w.style.width=W+'px';
+  cur=Math.min(cur,leaves.length);sync();
+}
+function sync(){
+  const L=leaves.length,w=$('#wrap'),W=w.clientWidth;
+  leaves.forEach((d,k)=>{const f=k<cur;d.classList.toggle('f',f);d.style.zIndex=f?k:L-k});
+  if(!single)w.style.transform=cur==0?`translateX(-${W/4}px)`:cur==L?`translateX(${W/4}px)`:'none';
+  else w.style.transform=cur==L?'translateX(-30%)':'none';
+  $('#pv').disabled=cur==0;$('#nx').disabled=cur>=L-(single?1:0)&&single?true:cur==L;
+  const step=single?1:2,n=pages.length;
+  $('#pg').textContent=!n?'–':single?`${Math.min(cur+1,n)} / ${n}`:cur==0?`Cover / ${n}`:cur==L?`End / ${n}`:`${cur*2}–${cur*2+1} / ${n}`;
+}
+const go=d=>{if(!leaves.length)return;const L=leaves.length;cur=Math.max(0,Math.min(single?L-1:L,cur+d));sync()};
+$('#nx').onclick=()=>go(1);$('#pv').onclick=()=>go(-1);
+addEventListener('keydown',e=>{if(e.key=='ArrowRight')go(1);if(e.key=='ArrowLeft')go(-1)});
+let sx=null;const stg=$('#stage');
+stg.addEventListener('touchstart',e=>sx=e.touches[0].clientX,{passive:true});
+stg.addEventListener('touchend',e=>{if(sx==null)return;const dx=e.changedTouches[0].clientX-sx;if(Math.abs(dx)>40)go(dx<0?1:-1);sx=null});
+stg.addEventListener('click',e=>{if(!leaves.length||e.target.closest('button'))return;const r=stg.getBoundingClientRect();go(e.clientX-r.left>r.width/2?1:-1)});
+let rt;addEventListener('resize',()=>{clearTimeout(rt);rt=setTimeout(()=>pages.length&&build(),150)});
+if('serviceWorker' in navigator)addEventListener('load',()=>navigator.serviceWorker.register('sw.js').catch(()=>{}));
+</script></body></html>
