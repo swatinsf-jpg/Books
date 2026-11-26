@@ -1,4 +1,4 @@
-const C='flipbook-v1',P='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/';
+const C='flipbook-v2',P='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/';
 const A=['./','./index.html','./manifest.webmanifest','./icon.svg',P+'pdf.min.js',P+'pdf.worker.min.js'];
 self.addEventListener('install',e=>{e.waitUntil(caches.open(C).then(c=>Promise.all(A.map(u=>c.add(u).catch(()=>0)))).then(()=>self.skipWaiting()))});
 self.addEventListener('activate',e=>{e.waitUntil(caches.keys().then(k=>Promise.all(k.filter(x=>x!==C).map(x=>caches.delete(x)))).then(()=>self.clients.claim()))});
